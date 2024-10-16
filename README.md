@@ -2,9 +2,11 @@
 <br>
 <br>
 **Prerequisites for running the script**
+<br>
 Limited - all steps to install and initiate analysis packages are included within codebase.
 Codebase assumes R is installed.
 <br>
 <br>
 **Limitations**
+<br>
 Functionality for producing GIF of US election results from 2000-2020 is not operational due to time constraints
