@@ -1,0 +1,198 @@
+---
+title: "24227011 ECON0128 Assignment 1 - David Morgan"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Code
+
+1. Data Preparation and Loading
+```{r}
+#Data Prep and Loading
+options(timeout = 1200)
+install.packages("maps")
+install.packages("sf")
+install.packages("dplyr")
+install.packages("ggthemes")
+install.packages("stringr")
+install.packages("ggplot2")
+install.packages("rnaturalearth")
+install.packages("devtools")
+devtools::install_github("ropensci/rnaturalearthhires") #Because it wasn't working!
+install.packages("tigris")
+install.packages("gganimate")
+
+library(maps)
+library(ggplot2)
+library(dplyr)
+library(sf)
+library(ggthemes)
+library(stringr)
+library(rnaturalearth)
+library(devtools)
+library(tigris)
+library(gganimate)
+
+#Read in csv input data
+data <- read.csv(
+  paste0(
+    "https://www.dropbox.com/scl/fi/9d6ctufur3g72nfdtneea/",
+    "countypres_2000-2020.csv?rlkey=vm0mtz12wgh6qxsgf7ops6pjx&dl=1"
+  )
+)
+
+#Convert state & party to categorical variables for comparison
+data <- data %>%
+  mutate(state = factor(state)) %>%
+  mutate(party = factor(party))
+
+#Aggregate candidate scores from the 2020 election only - add new variables to dataset for vote share, winning state candidate and party
+state_data <- data %>%
+  filter(year == 2020) %>%
+  group_by(state, party, candidate) %>%
+  summarize(total_votes = sum(candidatevotes)) %>%
+  ungroup() %>%
+  group_by(state) %>%
+  mutate(total_votes_state = sum(total_votes)) %>%
+  mutate(winning_candidate = candidate[which.max(total_votes)]) %>%
+  mutate(winning_party = party[which.max(total_votes)]) %>%
+  mutate(vote_share = (total_votes / total_votes_state)) %>%
+  arrange(desc(vote_share))
+
+#View winning candidates in each state and their vote share, sorted by highest vote share
+state_winners <- state_data %>%
+  group_by(state) %>%
+  filter(candidate == winning_candidate)
+
+View(state_winners)
+```
+
+2. State-Level Visualisation (2020)
+```{r}
+#Convert state text to lower case to enable mapping
+map_data <- state_data %>%
+  mutate(state = str_to_lower(state))
+
+# Load US state boundaries using rnaturalearth
+us_states <- ne_states(country = "united states of america", returnclass = "sf")
+us_states$region <- str_to_lower(us_states$name)
+
+#Remove Alaska and Hawaii
+us_states <- us_states %>%
+  filter(!region %in% c("hawaii", "alaska"))
+
+#Match shape file to election results file to produce visual
+#Append mapping file to dataset using left_join function via state variable
+usa_data <- left_join(us_states, map_data, by = c("region" = "state"))
+View(usa_data)
+
+#Visualise manipulated dataset using ggplot, including state names
+
+usa_centroids <- usa_data %>%
+  st_centroid()
+
+ vote_map <- ggplot(usa_data) +
+  geom_sf(aes(fill = winning_party)) + 
+  geom_sf_text(data = usa_centroids, aes(label = name), size = 5, color = "black") +
+  theme_void() +
+  labs(title = "US Election Results by State",
+       fill = "Winning Party") +
+  scale_fill_manual(values = c("DEMOCRAT" = "#527dff", 
+                               "REPUBLICAN" = "#ff5353", 
+                               "GREEN" = "#5bff87")) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r vote_map, echo=FALSE}
+plot(vote_map)
+```
+
+2. State-Level Visualisation (2020, Republican)
+```{r}
+
+#Show only republican voting intention
+rep_data <- usa_data %>%
+filter(party == "REPUBLICAN")
+
+#Reproduce graph, with different colours for fill and vote-share label
+rep_map <- ggplot(rep_data) +
+  geom_sf(aes(fill = vote_share)) + 
+  geom_sf_text(data = usa_centroids, aes(label = name), size = 5, color = "black") +
+  theme_void() +
+  labs(title = "US Election Results by State",
+       fill = "Vote Share") +
+  scale_fill_gradient(low = "white", high = "#880505", na.value = "gray") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r rep_map, echo=FALSE}
+plot(rep_map)
+```
+
+3. County-Level Visualisation (2000-2020)
+```{r}
+
+# Break into county level visualisation
+winning_party_by_county <- data %>%
+  group_by(year, county_name, state) %>%
+  filter(candidatevotes == max(candidatevotes)) %>%  # Get the candidate with the highest votes
+  ungroup()
+
+#Convert county text to lower case to enable mapping
+map_county_data <- winning_party_by_county %>%
+  mutate(county_name = str_to_lower(county_name))
+
+# Load US county boundaries using tigris package, caching to prevent repeated downloading
+options(tigris_use_cache = TRUE)
+us_counties <- counties(cb = TRUE, year = 2020, class = "sf")
+us_counties$NAME <- str_to_lower(us_counties$NAME)
+
+#Remove Alaska and Hawaii
+us_counties <- us_counties %>%
+  filter(!STATE_NAME %in% c("Hawaii", "Alaska"))
+
+#Match shape file to election results file to produce visual
+#Append mapping file to dataset using left_join function via county variable
+usa_county_data_na <- left_join(us_counties, map_county_data, by = c("NAME" = "county_name"),)
+usa_county_data <- usa_county_data_na %>%
+filter(!is.na(year))
+
+# Produce county map using ggplot
+county_map <- ggplot(usa_county_data) +
+  geom_sf(aes(fill = party), color = NA) + 
+  theme_void() +  
+  labs(title = "Election Results by County (2000-2020)",
+       fill = "Party") +  
+  scale_fill_manual(values = c("DEMOCRAT" = "#527dff", 
+                               "REPUBLICAN" = "#ff5353",
+                               "No data" = "gray"), 
+                    na.value = grey) +
+  facet_wrap(~ year, ncol = 2, nrow = 3) +  
+  theme(plot.title = element_text(hjust = 0.5),
+        strip.text = element_text(size = 12))
+```
+
+```{r county_map, echo=FALSE}
+plot(county_map)
+```
+
+4. GIF of voting intention (2000-2020)
+```{r}
+#Include NAs in order to maintain consistent number of observations across years
+p <- ggplot(usa_county_data_na) +
+  geom_sf(aes(fill = party), color = NA) +  # Remove borders by setting color = NA
+  theme_void() +  # Clean background
+  labs(title = "US Election Results by County: {closest_state}", fill = "Party") +
+  scale_fill_manual(values = c("DEMOCRAT" = "blue", 
+                               "REPUBLICAN" = "red"),
+                    na.value = "gray") +  # Set NA party values to gray
+  transition_states(year, transition_length = 2, state_length = 1) +  # Animation based on year
+  ease_aes('linear') +  # Smooth transition between years
+  enter_fade() + exit_fade()  # Fade-in and fade-out between transitions
+
+# Step 5: Render and save the animation as a GIF
+animate(p, nframes = 100, fps = 20, duration = 5, width = 800, height = 600, renderer = gifski_renderer("us_election_results.gif"))
+```
